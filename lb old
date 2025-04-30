@@ -1,0 +1,121 @@
+variable "ivrqa_east4_private_key" {                      #to be added in tfc
+  description = "Private Key of the SSL Cert"
+  default     = "abcd"
+}
+
+variable "ivrqa_east4_certificate" {                     #to be added in tfc
+  description = "Certificate Key of the SSL Cert"
+  default     = "pqrst"
+}
+
+data "google_compute_subnetwork" "claimivr_useast4_lb_subnet" {
+  name    = "tlz-live-c000006-dpt-east4-lb-snet"
+  project = "gcp-live-core-nprd-vpc-host"
+  region  = "us-east4"
+}
+
+resource "google_compute_address" "claimivr-ilb-internal-ip-east4" {
+  name         = "claimivr-ilb-internal-ip-east4"
+  address_type = "INTERNAL"
+  subnetwork   = data.google_compute_subnetwork.claimivr_useast4_lb_subnet.self_link
+  region       = "us-east4"
+}
+
+resource "google_compute_region_network_endpoint_group" "claimivr-qa-east4-neg-1" {
+  name                  = "claimivr-qa-neg1-useast4"
+  network_endpoint_type = "SERVERLESS"
+  region                = "us-east4"
+  project               = local.project_id
+  cloud_run {
+    service = "admin-portal-ui-qa-east4"
+  }
+}
+
+resource "google_compute_region_network_endpoint_group" "claimivr-qa-east4-neg-2" {
+  name                  = "claimivr-qa-neg2-useast4"
+  network_endpoint_type = "SERVERLESS"
+  region                = "us-east4"
+  project               = local.project_id
+  cloud_run {
+    service = "admin-portal-api-qa-east4"
+  }
+}
+
+
+#ilb with cloud run negs in us east4
+module "claimivr-qa-ilb2-useast4" {
+  source  = "app.terraform.io/fig-tlz/live-regional-lb-https-serverless-negs/google"
+  version = "1.0.2"
+
+  # Project and network details
+  project_id          = local.project_id
+  network_selflink    = data.google_compute_network.tlz-live-non-prod-vpc-claimsivr.self_link
+  subnetwork_selflink = data.google_compute_subnetwork.claimivr_useast4_lb_subnet.self_link
+  location            = "us-east4"
+
+  # Load Balancer name
+  name = "ivrqa-east4"
+
+  # SSL Certificate details
+  # private_key = var.ivrqa_east4_private_key
+  # certificate = var.ivrqa_east4_certificate
+  private_key = var.ivr_private_key
+  certificate = var.ivr_certificate
+
+  # Target HTTPS Proxy details
+  ssl            = true
+  min_tls        = "TLS_1_2"
+  policy_profile = "COMPATIBLE"
+
+  # Forwarding rule IP address
+  create_address = false
+  ip_address     = google_compute_address.claimivr-ilb-internal-ip-east4.self_link
+  port_range     = "443"
+  lb_scheme      = "INTERNAL_MANAGED"
+
+  create_url_map = true
+
+  # Host patterns to match
+  host         = ["ivruat.gcp.farmersinsurance.cloud"]  # need to update
+  path_matcher = "path-matcher-1"
+  backends = {
+    default = {
+      description = null
+      path = ["/admin-portal-ui/*"]
+      groups = {
+        group          = google_compute_region_network_endpoint_group.claimivr-qa-east4-neg-1.id
+        balancing_mode = "UTILIZATION"
+      }
+      iap_config = {
+        enable               = false
+        oauth2_client_id     = ""
+        oauth2_client_secret = ""
+      }
+      log_config = {
+        enable      = true
+        sample_rate = null
+      }
+    }
+    adminapi = {
+      description = null
+
+      path = ["/admin-portal-api/*"]
+      groups = {
+        group          = google_compute_region_network_endpoint_group.claimivr-qa-east4-neg-2.id
+        balancing_mode = "UTILIZATION"
+      }
+      iap_config = {
+        enable               = false
+        oauth2_client_id     = ""
+        oauth2_client_secret = ""
+      }
+      log_config = {
+        enable      = true
+        sample_rate = null
+      }
+    }
+
+  }
+}
+
+ 
